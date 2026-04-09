@@ -1,0 +1,61 @@
+name: Flask CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPO: cosmica-hello-images
+  ECR_URI: 949156002967.dkr.ecr.ap-south-1.amazonaws.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    #  Checkout code
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    #  Configure AWS Credentials
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    #  Login to ECR
+    - name: Login to Amazon ECR
+      run: |
+        aws ecr get-login-password --region $AWS_REGION \
+        | docker login --username AWS --password-stdin $ECR_URI
+
+    #  Build Docker Image
+    - name: Build Docker Image
+      run: |
+        docker build -t $ECR_REPO .
+
+    #  Tag Docker Image
+    - name: Tag Docker Image
+      run: |
+        docker tag $ECR_REPO:latest $ECR_URI/$ECR_REPO:latest
+
+    #  Push to ECR
+    - name: Push Docker Image to ECR
+      run: |
+        docker push $ECR_URI/$ECR_REPO:latest
+
+    #  Deploy to EC2
+    - name: Deploy to EC2
+      uses: appleboy/ssh-action@v0.1.6
+      with:
+        host: ${{ secrets.EC2_IP }}
+        username: ubuntu
+        key: ${{ secrets.EC2_SSH_KEY }}
+        script: |
+          docker pull $ECR_URI/$ECR_REPO:latest
+          docker stop flask || true
+          docker rm flask || true
+          docker run -d -p 5000:5000 --name flask --restart always $ECR_URI/$ECR_REPO:latest
